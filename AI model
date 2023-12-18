@@ -1,0 +1,121 @@
+from flask import Flask, render_template, request, jsonify
+import tensorflow as tf
+from tensorflow.keras.preprocessing import image
+import numpy as np
+import smtplib
+app = Flask(name)
+
+# Load the model
+model = tf.keras.models.load_model('keras_model4.h5')
+
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'})
+    
+    file = request.files['file']
+
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'})
+
+    if file and allowed_file(file.filename):
+        # Do not save the file, just pass the file data to the detection function
+        result = detect_disease(file.read())
+
+        if result == "Disease detected":
+            # Ask the user questions
+            return render_template('questions.html', questions=questions)
+        else:
+            return jsonify({'result': result})
+    
+    return jsonify({'error': 'File type not allowed'})
+
+@app.route('/process_questions', methods=['POST'])
+def process_questions():
+    answers = [request.form.get(f'answer_{i}') == 'yes' for i in range(1, len(questions) + 1)]
+
+    # Assess symptoms based on user answers
+    symptoms_result = assess_symptoms(
+        answers,
+        [not answer for answer in answers]  # Convert to "no" answers
+    )
+
+    return jsonify({'result': symptoms_result})
+
+@app.route('/result')
+def result():
+    return render_template('result.html')
+
+# Function to assess symptoms based on user responses
+def assess_symptoms(yes_answers, no_answers):
+    num_yes = yes_answers.count(True)
+    num_no = no_answers.count(True)
+
+    if num_yes > 1 and num_yes < 4:
+        return "It may not be urgent, but consider consulting a healthcare professional."
+    elif num_yes == len(yes_answers):
+        send_email("Doctor message", "This could indicate a serious condition. It is essential to go to the hospital for evaluation.", "hanen.m.mhmed@gmail.com")       
+        return "This could indicate a serious condition. It is essential to go to the hospital for evaluation."
+    
+    else:
+        return "No specific symptoms detected. Monitor your health and consult a healthcare professional if needed."
+
+def detect_disease(file_data):
+    try:
+        # Convert file data to a BytesIO object
+        from io import BytesIO
+        file_stream = BytesIO(file_data)
+
+        # Load and preprocess the image from file data
+        img = image.load_img(file_stream, target_size=(224, 224))
+        img_array = image.img_to_array(img)
+        img_array = np.expand_dims(img_array, axis=0)
+        img_array /= 255.
+
+        # Make predictions
+        predictions = model.predict(img_array)
+
+        # Get the index of the predicted class
+        predicted_class_index = np.argmax(predictions)
+        if predicted_class_index == 1:
+            return "No disease detected"
+        else:
+            return "Disease detected"
+    except Exception as e:
+        # Handle the exception, e.g., log the error
+        print(f"Error processing image: {e}")
+        return "Error processing image"
+
+def send_email(subject, body, recipient_email):
+    sender_email = 'hm0994903@gmail.com'
+    sender_password = "***************"
+    message = f"Subject: {subject}\n\n{body}"
+try:
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.starttls()
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, recipient_email, message)
+        print("Email sent successfully!")
+    except Exception as e:
+        print(f"Failed to send email. Error: {e}")
+#to get the password open google security 
+# search about app password 
+# then write the name of the the project
+#take the code that you get       
+if name == 'main':
+    questions = [
+        "Do you feel headache?",
+        "Do you feel abdominal pain?",
+        "Do you feel chest pain?",
+        "Do you feel painful, swollen joints in your knees and ankles?"
+    ]
+    app.run(host = "0.0.0.0",debug=True)
